@@ -1,0 +1,62 @@
+const chokidar = require("chokidar");
+const axios = require("axios");
+const fs = require("fs");
+require("dotenv").config();
+
+// Slack Webhook URL from environment variables
+const SLACK_WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL;
+
+if (!SLACK_WEBHOOK_URL) {
+  console.error("Slack Webhook URL not configured in .env file");
+  process.exit(1);
+}
+
+// Path to log file
+const LOG_FILE_PATH =
+  process.env.LOG_FILE_PATH || "/home/ubuntu/.pm2/logs/your-app-out.log";
+
+// Function to send log messages to Slack
+const sendToSlack = async (message) => {
+  try {
+    await axios.post(SLACK_WEBHOOK_URL, { text: message });
+    console.log("Log sent to Slack:", message);
+  } catch (error) {
+    console.error("Failed to send log to Slack:", error.message);
+  }
+};
+
+// Watch the log file for changes
+const watcher = chokidar.watch(LOG_FILE_PATH, {
+  persistent: true,
+  usePolling: true, // For better compatibility on EC2
+  interval: 500, // Check for changes every 500ms
+});
+
+console.log(`Watching log file: ${LOG_FILE_PATH}`);
+
+let fileSize = 0;
+
+watcher.on("change", async (path) => {
+  try {
+    const stats = fs.statSync(path);
+    if (stats.size > fileSize) {
+      const newContent = fs
+        .readFileSync(path, "utf8")
+        .slice(fileSize, stats.size);
+
+      fileSize = stats.size;
+
+      // Send new log entries to Slack
+      const lines = newContent.trim().split("\n");
+      for (const line of lines) {
+        await sendToSlack(line);
+      }
+    }
+  } catch (error) {
+    console.error("Error reading log file:", error.message);
+  }
+});
+
+watcher.on("error", (error) => {
+  console.error("Watcher error:", error);
+});
